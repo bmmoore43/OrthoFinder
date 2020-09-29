@@ -78,9 +78,11 @@ while not ok:
         max_int = int(max_int/10)
     
 fastaExtensions = {"fa", "faa", "fasta", "fas", "pep"}
-if sys.platform.startswith("linux"):
-    with open(os.devnull, "w") as f:
-        subprocess.call("taskset -p 0xffffffffffff %d" % os.getpid(), shell=True, stdout=f) # get round problem with python multiprocessing library that can set all cpu affinities to a single cpu
+# uncomment to get round problem with python multiprocessing library that can set all cpu affinities to a single cpu
+# This can cause use of only a limited number of cpus in other cases so it has been commented out
+# if sys.platform.startswith("linux"):
+#     with open(os.devnull, "w") as f:
+#         subprocess.call("taskset -p 0xffffffffffff %d" % os.getpid(), shell=True, stdout=f) 
 
 my_env = os.environ.copy()
 # use orthofinder supplied executables by preference
@@ -518,6 +520,11 @@ class WaterfallMethod:
                 WaterfallMethod.ProcessBlastHits(*args, qDoubleBlast=qDoubleBlast)
             except queue.Empty:
                 return 
+            except Exception:
+                seqsInfo, _, _, iSpecies = args
+                i = seqsInfo.speciesToUse[iSpecies]
+                print("ERROR: Error processing files Blast%d_*" % i)
+                raise
 
     @staticmethod
     def ConnectCognates(seqsInfo, iSpecies): 
@@ -674,7 +681,7 @@ def Stats_SizeTable(writer_sum, writer_sp, properOGs, allGenesCounter, iSpecies,
         writer_sum.writerow([i, n.count(i)])
 
 def Stats(ogs, speciesNamesDict, iSpecies, iResultsVersion):
-    """ Top-level method for calcualtion of stats for the orthogroups"""
+    """ Top-level method for calculation of stats for the orthogroups"""
     allOgs = [[list(map(int, g.split("_"))) for g in og] for og in ogs]
     properOGs = [og for og in allOgs if len(og) > 1]
     allGenes = [g for og in allOgs for g in og]
@@ -807,7 +814,7 @@ def CanRunMCL():
 def GetProgramCaller():
     config_file = os.path.join(__location__, 'config.json') 
     pc = program_caller.ProgramCaller(config_file if os.path.exists(config_file) else None)
-    config_file_user = os.path.join(__location__, 'config_user.json') 
+    config_file_user = os.path.expanduser("~/config_orthofinder_user.json")
     if os.path.exists(config_file_user):
         pc_user = program_caller.ProgramCaller(config_file_user)
         pc.Add(pc_user)
@@ -829,6 +836,7 @@ def PrintHelp(prog_caller):
     print("OPTIONS:")
     print(" -t <int>          Number of parallel sequence search threads [Default = %d]" % util.nThreadsDefault)
     print(" -a <int>          Number of parallel analysis threads [Default = %d]" % util.nAlgDefault)
+    print(" -d                Input is DNA sequences")
     print(" -M <txt>          Method for gene tree inference. Options 'dendroblast' & 'msa'")
     print("                   [Default = dendroblast]")
     print(" -S <txt>          Sequence search program [Default = diamond]")
@@ -843,7 +851,7 @@ def PrintHelp(prog_caller):
     print(" -I <int>          MCL inflation parameter [Default = %0.1f]" % g_mclInflation)
     print(" -x <file>         Info for outputting results in OrthoXML format")
     print(" -p <dir>          Write the temporary pickle files to <dir>")
-    print(" -1                Only perform one-way sequence search ")
+    print(" -1                Only perform one-way sequence search")
     print(" -X                Don't add species names to sequence IDs")
     print(" -n <txt>          Name to append to the results directory")  
     print(" -o <txt>          Non-default results directory")  
@@ -928,6 +936,7 @@ class Options(object):#
         self.speciesXMLInfoFN = None
         self.speciesTreeFN = None
         self.mclInflation = g_mclInflation
+        self.dna = False
     
     def what(self):
         for k, v in self.__dict__.items():
@@ -959,6 +968,7 @@ def ProcessArgs(prog_caller, args):
     resultsDir_nonDefault = None
     pickleDir_nonDefault = None
     q_selected_msa_options = False
+    q_selected_search_option = False
     
     """
     -f: store fastaDir
@@ -1016,6 +1026,10 @@ def ProcessArgs(prog_caller, args):
                 util.Fail()   
         elif arg == "-1":
             options.qDoubleBlast = False
+        elif arg == "-d" or arg == "--dna":
+            options.dna = True
+            if not q_selected_search_option:
+                options.search_program = "blast_nucl"
         elif arg == "-X":
             options.qAddSpeciesToIDs = False
         elif arg == "-I" or arg == "--inflation":
@@ -1068,7 +1082,7 @@ def ProcessArgs(prog_caller, args):
             while checkDirName.endswith("/"):
                 checkDirName = checkDirName[:-1]
             path, newDir = os.path.split(checkDirName)
-            if not os.path.exists(path):
+            if path != "" and not os.path.exists(path):
                 print("ERROR: location '%s' for results directory '%s' does not exist.\n" % (path, newDir))
                 util.Fail()
         elif arg == "-s" or arg == "--speciestree":  
@@ -1210,7 +1224,7 @@ def ProcessArgs(prog_caller, args):
         print("ERROR: Search program (%s) not configured in config.json file" % options.search_program)
         util.Fail()
         
-    util.PrintTime("Starting OrthoFinder")    
+    util.PrintTime("Starting OrthoFinder %s" % util.version)    
     print("%d thread(s) for highly parallel tasks (BLAST searches etc.)" % options.nBlast)
     print("%d thread(s) for OrthoFinder algorithm" % options.nProcessAlg)
     return options, fastaDir, continuationDir, resultsDir_nonDefault, pickleDir_nonDefault            
@@ -1316,6 +1330,7 @@ def DoOrthogroups(options, speciesInfoObj, seqsInfo):
     blastDir_list = files.FileHandler.GetBlastResultsDir()
     for iSpecies in range(seqsInfo.nSpecies):
         cmd_queue.put((seqsInfo, blastDir_list, Lengths, iSpecies))
+    files.FileHandler.GetPickleDir()     # create the pickle directory before the parallel processing to prevent a race condition
     runningProcesses = [mp.Process(target=WaterfallMethod.Worker_ProcessBlastHits, args=(cmd_queue, options.qDoubleBlast)) for i_ in range(options.nProcessAlg)]
     for proc in runningProcesses:
         proc.start()
@@ -1391,7 +1406,7 @@ def ProcessPreviousFiles(workingDir_list, qDoubleBlast):
     # check fasta files are present 
     previousFastaFiles = files.FileHandler.GetSortedSpeciesFastaFiles()
     if len(previousFastaFiles) == 0:
-        err_text = "ERROR: No processed fasta files in the supplied previous working directory:\n" + workingDir_list + "\n"
+        err_text = "ERROR: No processed fasta files in the supplied previous working directories:\n" + "\n".join(workingDir_list) + "\n"
         files.FileHandler.LogFailAndExit(err_text)
     tokens = previousFastaFiles[-1][:-3].split("Species")
     lastFastaNumberString = tokens[-1]
@@ -1514,7 +1529,7 @@ def GetOrthologues(speciesInfoObj, options, prog_caller):
 def GetOrthologues_FromTrees(options):
     orthologues.OrthologuesFromTrees(options.recon_method, options.nBlast, options.speciesTreeFN, options.qAddSpeciesToIDs)
  
-def ProcessesNewFasta(fastaDir, speciesInfoObj_prev = None, speciesToUse_prev_names=[]):
+def ProcessesNewFasta(fastaDir, q_dna, speciesInfoObj_prev = None, speciesToUse_prev_names=[]):
     """
     Process fasta files and return a Directory object with all paths completed.
     """
@@ -1592,9 +1607,9 @@ def ProcessesNewFasta(fastaDir, speciesInfoObj_prev = None, speciesToUse_prev_na
                             qHasAA = qHasAA or any([c in line for c in ['E','F','I','L','P','Q']]) # AAs minus nucleotide ambiguity codes
                         outputFasta.write(line)
                 outputFasta.write("\n")
-            if not qHasAA:
+            if (not qHasAA) and (not q_dna):
                 qOk = False
-                print("ERROR: %s appears to contain nucleotide sequences instead of amino acid sequences." % fastaFilename)
+                print("ERROR: %s appears to contain nucleotide sequences instead of amino acid sequences. Use '-d' option" % fastaFilename)
             iSpecies += 1
             iSeq = 0
             outputFasta.close()
@@ -1690,7 +1705,7 @@ def main(args=None):
             speciesInfoObj, speciesToUse_names = ProcessPreviousFiles(files.FileHandler.GetWorkingDirectory1_Read(), options.qDoubleBlast)
             print("\nAdding new species in %s to existing analysis in %s" % (fastaDir, continuationDir))
             # 3. 
-            speciesInfoObj = ProcessesNewFasta(fastaDir, speciesInfoObj, speciesToUse_names)
+            speciesInfoObj = ProcessesNewFasta(fastaDir, options.dna, speciesInfoObj, speciesToUse_names)
             files.FileHandler.LogSpecies()
             options = CheckOptions(options, speciesInfoObj.speciesToUse)
             # 4.
@@ -1711,7 +1726,7 @@ def main(args=None):
         elif options.qStartFromFasta:
             # 3. 
             speciesInfoObj = None
-            speciesInfoObj = ProcessesNewFasta(fastaDir)
+            speciesInfoObj = ProcessesNewFasta(fastaDir, options.dna)
             files.FileHandler.LogSpecies()
             options = CheckOptions(options, speciesInfoObj.speciesToUse)
             # 4

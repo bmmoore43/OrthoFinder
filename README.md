@@ -59,14 +59,27 @@ docker run --ulimit nofile=1000000:1000000 -it --rm -v /full/path/to/fastas:/inp
 A more complete guide can be found here: <https://davidemms.github.io/orthofinder_tutorials/alternative-ways-of-getting-OrthoFinder.html>. Note that running OrthoFinder on Windows in a docker containner will not be as fast as running it natively.
 
 ## Running OrthoFinder
-To Run OrthoFinder on the Example Data type
+To run OrthoFinder on the Example Data type:
 
 `OrthoFinder/orthofinder -f OrthoFinder/ExampleData`
+
+To run on your own dataset, replace "OrthoFinder/ExampleData" with the directory containing your input fasta files, with one file per species. OrthoFinder will look for input fasta files with any of the following filename extensions:
+* .fa
+* .faa
+* .fasta
+* .fas
+* .pep
 
 ## What OrthoFinder provides
 **There is a tutorial that provides a guided tour of the main results files here: <https://davidemms.github.io/orthofinder_tutorials/exploring-orthofinders-results.html>**
 
 A standard OrthoFinder run produces a set of files describing the orthogroups, orthologs, gene trees, resolve gene trees, the rooted species tree, gene duplication events and comparative genomic statistics for the set of species being analysed. These files are located in an intuitive directory structure.
+
+### Results Files: Phylogenetic Hierarchical Orthogroups Directory
+From version 2.4.0 OrthoFinder now infers orthogroups from the gene trees at each hierarchical level for your species (i.e. at each node in the species tree). 
+1. **N0.tsv** is a tab separated text file. Each row contains the genes belonging to a single orthogroup. The genes from each orthogroup are organized into columns, one per species. Additional columns give the HOG (Hierarchical Orthogroup) ID and the node in the gene tree from which the HOG descended. **This file effectively replaces the orthogroups from Orthogroups.tsv. Because they are calculated from trees, the orthogroups from N0.tsv are more accurate (approximately 10% relative increase on the Orthobench benchmarks compared to OrthoFinder version 2).**
+
+2. **N1.txt, N2.tsv, ...**: Orthogroups inferred from the gene trees corresponding to the clades of species in the species tree N1, N2, etc. Because OrthoFinder now infers orthogroups at every hierarchical level within the species tree, it is now possible to include outgroup species within the analysis but use the files to get orthogroups defined for your chosen clade within the species tree. The use of an outgroup gives even higher accuracy (approximately 13% relative increase on the Orthobench benchmarks compared to OrthoFinder version 2).
 
 ### Results Files: Orthogroups Directory
 1. **Orthogroups.tsv** is a tab separated text file. Each row contains the genes belonging to a single orthogroup. The genes from each orthogroup are organized into columns, one per species.
@@ -83,10 +96,10 @@ A standard OrthoFinder run produces a set of files describing the orthogroups, o
 The Orthologues directory contains one sub-directory for each species that in turn contains a file for each pairwise species comparison, listing the orthologs between that species pair. Orthologues can be one-to-one, one-to-many or many-to-many depending on the gene duplication events since the orthologs diverged (see Section "Orthogroups, Orthologues & Paralogues" for more details). Each row in a file contains the gene(s) in one species that are orthologues of the gene(s) in the other species and each row is cross-referenced to the orthogroup that contains those genes. 
 
 ### Results Files: Gene Trees Directory
-1. A phylogenetic tree inferred for each orthogroup
+1. A rooted phylogenetic tree inferred for each orthogroup with 4 or more sequences (4 sequences is the mimimum number required for tree inference with most tree inference programs).
 
 ### Results Files: Resolved Gene Trees Directory
-1. A rooted phylogenetic tree inferred for each orthogroup and resolved using the OrthoFinder duplication-loss coalescent model.
+1. A rooted phylogenetic tree inferred for each orthogroup with 4 or more sequences and resolved using the OrthoFinder hybrid species-overlap/duplication-loss coalescent model.
 
 ### Results Files: Species Tree Directory
 1. **SpeciesTree_rooted.txt** A STAG species tree inferred from all orthogroups, containing STAG support values at internal nodes and rooted using STRIDE.
@@ -229,10 +242,11 @@ Download the appropriate version for your machine, extract it and copy the execu
 or alternatively if you don't have root privileges, instead of the last step above, add the directory containing the directory to your PATH variable 
 - ``export PATH=$PATH:`pwd`/mmseqs2/bin/``
 
-#### Trees from MSA: `"-M msa"`
-The following steps are not required for the standard OrthoFinder use cases and are only needed if you want to infer maximum likelihood trees from multiple sequence alignments (MSA). This is considerably more costly computationally but more accurate. By default, MAFFT is used for the alignment and FastTree for the tree inference. Both the executables should be in the system path. The option for this is, "-M msa".
+## Trees from MSA: `"-M msa"`
+The following is not required for the standard OrthoFinder use cases and are only needed if you want to infer maximum likelihood trees from multiple sequence alignments (MSA). This is more costly computationally but more accurate. By default, MAFFT is used for the alignment and FastTree for the tree inference. The option for this is, "-M msa". You should be careful using any other tree inference programs, such as IQTREE or RAxML, since inferring the gene trees for the complete set of orthogroups using anything that is not as quick as FastTree will require significant computational resources/time. The executables you wish to use should be in the system path. 
 
-You can actually use **any** alignment or tree inference program you like the best! Be careful with the method you chose, OrthoFinder typically needs to infer about 10,000-20,000 gene trees. If you have many species or if the tree/alignment method isn't super-fast then this can take a very long time! MAFFT + FastTree provides a reasonable compromise. Orthofinder already knows how to call:
+### Adding addtional tree inference, local alignment or MSA programs: config.json
+You can actually use **any** alignment or tree inference program you like the best! Be careful with the method you chose, OrthoFinder typically needs to infer about 10,000-20,000 gene trees. If you have many species or if the tree/alignment method isn't super-fast then this can take a very long time! MAFFT + FastTree provides a reasonable compromise. OrthoFinder already knows how to call:
 - mafft
 - muscle
 - iqtree
@@ -240,12 +254,17 @@ You can actually use **any** alignment or tree inference program you like the be
 - raxml-ng
 - fasttree
 
-If you want to use a different program, there is a simple configuration file called "config.json" in the orthofinder directory. You just need to add an entry to tell it what the command line looks like for the program you want to use. There are lots of examples in the file that you can follow.
-
 For example, to you muscle and iqtree, the command like arguments you need to add are: `"-M msa -A muscle -T iqtree"`
 
-#### Python Source Code Version
-It is recommended that you use the standalone binaries for OrthoFinder which do not require python or scipy to be installed. However, the python source code version is available from the github 'releases' page (e.g. 'OrthoFinder-1.0.6_source.tar.gz' and requires python 2.7 and scipy to be installed. Up-to-date and clear instructions are provided here: http://www.scipy.org/install.html, be sure to choose a version using python 2.7. As websites can change, an alternative is to search online for "install scipy". 
+OrthoFinder also knows how to use the following local sequence alignment programs:
+- BLAST
+- DIAMOND
+- MMSeqs2
+
+If you want to use a different program, there is a simple configuration file called **"config.json"** in the orthofinder directory and you can also create a file of the same format called **"config_orthofinder_user.json"** in your user home directory. You just need to add an entry to tell OrthoFinder what the command line looks like for the program you want to use. There are lots of examples in the file that you can follow. The "config.json" file is read first and then the "config_orthofinder_user.json", if it is present. The config_orthofinder_user.json file can be used to add user-specific options and to overwrite options from config.json. In most cases it is best to add additional options to the "config_orthofinder_user.json" since these will continue to apply if you update your version of OrthoFinder.
+
+## Python Source Code Version
+There is a standalone binary for OrthoFinder which do not require python or scipy to be installed which is therefore the easiest for many users. However, the python source code version is available from the github 'releases' page (e.g. 'OrthoFinder_source.tar.gz') and requires python 2.7 or python 3 plus scipy & numpy to be installed. Up-to-date and clear instructions for scipy/numpy are provided here: http://www.scipy.org/install.html. As websites can change, an alternative is to search online for "install scipy". 
 
 ## Advanced usage
 ### Adding Extra Species

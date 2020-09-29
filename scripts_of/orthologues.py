@@ -122,8 +122,8 @@ class OrthoGroupsSet(object):
             try:
                 self.seqIDsEx = self._extractor(files.FileHandler.GetSequenceIDsFN())
             except RuntimeError as error:
-                print((error.message))
-                if error.message.startswith("ERROR"): 
+                print(str(error))
+                if str(error).startswith("ERROR"): 
                     files.FileHandler.LogFailAndExit()
                 else:
                     print("Tried to use only the first part of the accession in order to list the sequences in each orthogroup\nmore concisely but these were not unique. The full accession line will be used instead.\n")     
@@ -511,7 +511,7 @@ def CheckUserSpeciesTree(speciesTreeFN, expSpecies):
         t = tree.Tree(speciesTreeFN, format=1)
     except Exception as e:
         print("\nERROR: Incorrectly formated user-supplied species tree")
-        print((e.message))
+        print(str(e))
         util.Fail()
     actSpecies = (t.get_leaf_names())
     c = Counter(actSpecies)
@@ -585,11 +585,13 @@ def CanRunOrthologueDependencies(workingDir, qMSAGeneTrees, qPhyldog, qStopAfter
             capture = subprocess.Popen("dlcpar_search --version", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=my_env)
             stdout = [x for x in capture.stdout]
             try:
-                stdout = "".join([x.decode() for x in capture.stdout])
+                stdout = "".join([x.decode() for x in stdout])
             except (UnicodeDecodeError, AttributeError):
-                stdout = "".join([x.encode() for x in capture.stdout])
+                stdout = "".join([x.encode() for x in stdout])
             version = stdout.split()[-1]
-            major, minor, release = list(map(int, version.split(".")))
+            tokens = list(map(int, version.split(".")))
+            major, minor = tokens[:2]
+            release = tokens[2] if len(tokens) > 2 else 0
             # require 1.0.1 or above            
             actual = (major, minor, release)
             required = [1,0,1]
